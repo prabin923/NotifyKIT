@@ -1,0 +1,35 @@
+{
+  "region": "ap-southeast-1",
+  "apps": {
+    "api": {
+      "name": "api",
+      "root": "apps/api",
+      "framework": "nestjs",
+      "httpPort": 3000,
+      "build": {
+        "command": "npm run build",
+        "outputDirectory": "dist"
+      }
+    },
+    "dashboard": {
+      "name": "dashboard",
+      "root": "apps/dashboard",
+      "framework": "nextjs",
+      "httpPort": 3000,
+      "build": {
+        "command": "npm run build"
+      }
+    },
+    "workers": {
+      "name": "workers",
+      "root": "apps/workers",
+      "framework": "bun",
+      "entry": "src/main.ts",
+      "httpPort": 3000,
+      "build": {
+        "command": "npm run build",
+        "outputDirectory": "."
+      }
+    }
+  }
+}
