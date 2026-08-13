@@ -19,7 +19,7 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, config));
   const prisma = app.get(PrismaService);
   prisma.enableShutdownHooks(app);
-  const port = Number(process.env.API_PORT ?? 3000);
+  const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3000);
   await app.listen(port, '0.0.0.0');
   console.info(JSON.stringify({ message: 'API started', port }));
 }

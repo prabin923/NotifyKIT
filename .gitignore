@@ -6,3 +6,6 @@ coverage
 .env.local
 *.log
 apps/api/prisma/test.db
+.prisma/
+.vercel
+.env*

@@ -9,5 +9,6 @@ COPY packages/shared/package.json packages/shared/package.json
 RUN npm ci
 COPY . .
 RUN npx prisma generate --schema prisma/schema.prisma
+RUN npm run build -w @notification-platform/api
 EXPOSE 3000
 CMD ["npm", "run", "start", "-w", "@notification-platform/api"]

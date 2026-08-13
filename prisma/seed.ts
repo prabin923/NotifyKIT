@@ -1,9 +1,13 @@
 import { PrismaClient, Channel, DashboardRole, TemplateStatus, WorkflowStatus } from '@prisma/client';
+import { withAccelerate } from '@prisma/extension-accelerate';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { sha256 } from '../packages/shared/src/index.js';
 
-const prisma = new PrismaClient();
+const databaseUrl = process.env.DATABASE_URL;
+const prisma = databaseUrl?.startsWith('prisma://') || databaseUrl?.startsWith('prisma+postgres://')
+  ? new PrismaClient({ datasourceUrl: databaseUrl }).$extends(withAccelerate()) as unknown as PrismaClient
+  : new PrismaClient();
 
 async function main(): Promise<void> {
   const pepper = process.env.API_KEY_PEPPER ?? 'local-development-pepper-only';
@@ -44,8 +48,7 @@ async function main(): Promise<void> {
     create: { id: `${tenant.id}-order-created`, tenantId: tenant.id, name: 'Order created', eventType: 'order.created', status: WorkflowStatus.ACTIVE, definition: { nodes: [{ type: 'EVENT' }, { type: 'SEND_NOTIFICATION', category: 'transactional', channels: ['EMAIL'] }, { type: 'END' }] } },
   });
 
-  console.log(`Demo dashboard: owner@example.test / ChangeMe123!`);
-  console.log(`Demo API key (shown once): ${rawKey}`);
+  console.log('Demo dashboard user seeded.');
 }
 
 main().finally(() => prisma.$disconnect());

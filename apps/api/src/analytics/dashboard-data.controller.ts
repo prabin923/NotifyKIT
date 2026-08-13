@@ -5,6 +5,8 @@ import { PrismaService } from '../common/prisma.service';
 import type { PlatformRequest } from '../common/request-context';
 import { CreateNotificationDto } from '../notifications/dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CreateEventDto } from '../events/dto';
+import { EventsService } from '../events/events.service';
 import { CreateTemplateDto } from '../templates/dto';
 import { TemplatesService } from '../templates/templates.service';
 import { CreateWebhookDto } from '../webhooks/dto';
@@ -20,6 +22,7 @@ export class DashboardDataController {
     private readonly templatesService: TemplatesService,
     private readonly webhooksService: WebhooksService,
     private readonly workflowsService: WorkflowsService,
+    private readonly eventsService: EventsService,
   ) {}
   @Get('notifications') notifications(@Req() request: PlatformRequest) { return this.prisma.notification.findMany({ where: { tenantId: request.dashboardUser!.tenantId }, include: { user: { select: { externalId: true, email: true } }, deliveries: true }, orderBy: { createdAt: 'desc' }, take: 100 }); }
   @Get('events') events(@Req() request: PlatformRequest) { return this.prisma.event.findMany({ where: { tenantId: request.dashboardUser!.tenantId }, orderBy: { createdAt: 'desc' }, take: 100 }); }
@@ -34,6 +37,7 @@ export class DashboardDataController {
   @Get('providers') providers() { return { email: { mode: process.env.EMAIL_PROVIDER ?? 'console', smtp_configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM) }, push: { mode: process.env.PUSH_PROVIDER ?? 'console', fcm_configured: Boolean(process.env.FCM_PROJECT_ID && process.env.FCM_CLIENT_EMAIL && process.env.FCM_PRIVATE_KEY) }, webhook: { signing: 'HMAC SHA-256', encrypted_secrets: true } }; }
   @Get('settings') settings(@Req() request: PlatformRequest) { return this.prisma.tenant.findFirst({ where: { id: request.dashboardUser!.tenantId }, select: { id: true, name: true, slug: true, plan: true, status: true, tenantPolicy: true } }); }
   @Post('notifications') @HttpCode(202) createNotification(@Req() request: PlatformRequest, @Body() body: CreateNotificationDto) { return this.notificationsService.create(request.dashboardUser!.tenantId, body); }
+  @Post('events') @HttpCode(202) createEvent(@Req() request: PlatformRequest, @Body() body: CreateEventDto) { return this.eventsService.accept(request.dashboardUser!.tenantId, body); }
   @Post('notifications/:id/cancel') @HttpCode(204) cancelNotification(@Req() request: PlatformRequest, @Param('id') id: string) { return this.notificationsService.cancel(request.dashboardUser!.tenantId, id); }
   @Post('templates') createTemplate(@Req() request: PlatformRequest, @Body() body: CreateTemplateDto) { return this.templatesService.create(request.dashboardUser!.tenantId, { name: body.name, eventType: body.event_type, channel: body.channel, subject: body.subject, body: body.body, language: body.language, version: body.version, status: body.status }); }
   @Post('workflows') createWorkflow(@Req() request: PlatformRequest, @Body() body: CreateWorkflowDto) { return this.workflowsService.create(request.dashboardUser!.tenantId, { name: body.name, eventType: body.event_type, definition: body.definition, status: body.status }); }

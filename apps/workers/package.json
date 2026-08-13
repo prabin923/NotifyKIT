@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",
+    "@prisma/extension-accelerate": "^3.0.1",
     "bullmq": "^5.34.6",
     "firebase-admin": "^13.0.1",
     "ioredis": "^5.4.1",

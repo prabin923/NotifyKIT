@@ -1,1 +1,7 @@
-import { DashboardShell } from '../../components/dashboard-shell'; import { LoginGate } from '../../components/login-gate'; import { ResourcePage } from '../../components/resource-page'; export default function Page() { return <LoginGate><DashboardShell><ResourcePage title="Events" endpoint="/v1/dashboard/events" description="Incoming universal events accepted by the platform." /></DashboardShell></LoginGate>; }
+import { DashboardShell } from '../../components/dashboard-shell';
+import { EventWorkspace } from '../../components/event-workspace';
+import { LoginGate } from '../../components/login-gate';
+
+export default function Page() {
+  return <LoginGate><DashboardShell><EventWorkspace /></DashboardShell></LoginGate>;
+}

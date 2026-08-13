@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient, Channel, DeliveryStatus, NotificationStatus, WebhookStatus } from '@prisma/client';
+import { withAccelerate } from '@prisma/extension-accelerate';
 import { Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
 import { decryptWebhookSecret } from './secret-cipher';
@@ -12,12 +13,20 @@ type WebhookJob = { webhookDeliveryId: string };
 const MAX_ATTEMPTS = 5;
 const queueNames = ['email', 'push', 'webhook'] as const;
 
+function createPrismaClient(): PrismaClient {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl?.startsWith('prisma://') || databaseUrl?.startsWith('prisma+postgres://')) {
+    return new PrismaClient({ datasourceUrl: databaseUrl }).$extends(withAccelerate()) as unknown as PrismaClient;
+  }
+  return new PrismaClient();
+}
+
 function priorityFor(status: NotificationStatus): number {
   return status === NotificationStatus.RETRYING ? 2 : 5;
 }
 
 export class WorkerRuntime {
-  private readonly prisma = new PrismaClient();
+  private readonly prisma = createPrismaClient();
   private readonly redis: IORedis;
   private readonly queues: Record<string, Queue>;
   private readonly workers: Worker[] = [];
