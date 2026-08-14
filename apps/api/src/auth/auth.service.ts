@@ -1,19 +1,11 @@
-import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
 import type { DashboardUserContext } from '../common/request-context';
-import type { StringValue } from 'ms';
 
-@Injectable()
 export class AuthService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly jwt: JwtService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async login(email: string, password: string): Promise<{ access_token: string; user: Omit<DashboardUserContext, 'id'> & { id: string; name: string } }> {
     const user = await this.prisma.dashboardUser.findFirst({ where: { email: email.toLowerCase(), status: 'ACTIVE', tenant: { status: 'ACTIVE' } } });
@@ -21,16 +13,17 @@ export class AuthService {
       throw new ApiError('INVALID_CREDENTIALS', 'Email or password is incorrect.', 401);
     }
     await this.prisma.dashboardUser.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    const accessToken = await this.jwt.signAsync(
-      { sub: user.id, tenant_id: user.tenantId, role: user.role, email: user.email },
-      { expiresIn: (this.config.get<string>('JWT_EXPIRES_IN') ?? '15m') as StringValue },
-    );
+    const secret = process.env.JWT_SECRET;
+    if (!secret) throw new ApiError('SERVER_MISCONFIGURED', 'Dashboard authentication is not configured.', 503);
+    const accessToken = jwt.sign({ sub: user.id, tenant_id: user.tenantId, role: user.role, email: user.email }, secret, { expiresIn: (process.env.JWT_EXPIRES_IN ?? '15m') as jwt.SignOptions['expiresIn'] });
     return { access_token: accessToken, user: { id: user.id, tenantId: user.tenantId, role: user.role, email: user.email, name: user.name } };
   }
 
   async verifyToken(token: string): Promise<DashboardUserContext> {
     try {
-      const payload = await this.jwt.verifyAsync<{ sub: string; tenant_id: string; role: DashboardUserContext['role']; email: string }>(token);
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error('missing JWT secret');
+      const payload = jwt.verify(token, secret) as { sub: string; tenant_id: string; role: DashboardUserContext['role']; email: string };
       const user = await this.prisma.dashboardUser.findFirst({ where: { id: payload.sub, tenantId: payload.tenant_id, status: 'ACTIVE', tenant: { status: 'ACTIVE' } } });
       if (!user) throw new Error('user unavailable');
       return { id: user.id, tenantId: user.tenantId, role: user.role, email: user.email };

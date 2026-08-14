@@ -42,7 +42,14 @@ services:
       DATABASE_URL: postgresql://notification:notification@postgres:5432/notification_platform?schema=public
       REDIS_URL: redis://redis:6379
       SMTP_HOST: mailpit
-    command: sh -c "npx prisma migrate deploy --schema prisma/schema.prisma && npm run start -w @notification-platform/api"
+      # Keep browser CORS aligned with the dashboard port, including an
+      # alternate local port selected through DASHBOARD_PORT.
+      DASHBOARD_URL: ${DASHBOARD_ORIGIN:-http://localhost:${DASHBOARD_PORT:-3001}}
+      CORS_ORIGINS: ${DASHBOARD_ORIGIN:-http://localhost:${DASHBOARD_PORT:-3001}}
+    # Compose is the local-development stack and may reuse a volume created
+    # before migration history existed. `db push` safely synchronizes that
+    # schema; production deployments should run `prisma migrate deploy`.
+    command: sh -c "npx prisma db push --skip-generate --schema prisma/schema.prisma && exec node apps/api/dist/main.js"
     ports:
       - "3000:3000"
     depends_on:
@@ -70,10 +77,14 @@ services:
     build:
       context: .
       dockerfile: apps/dashboard/Dockerfile
+      args:
+        # Browser calls stay on the dashboard origin; the Next.js proxy below
+        # forwards them over the Compose network to the API container.
+        NEXT_PUBLIC_API_URL: /api/proxy
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3000
+      API_INTERNAL_URL: http://api:3000
     ports:
-      - "3001:3001"
+      - "${DASHBOARD_PORT:-3001}:3001"
     depends_on:
       - api
 

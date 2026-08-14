@@ -1,8 +1,6 @@
-import { Injectable } from '@nestjs/common';
 import { Channel } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 
-@Injectable()
 export class PreferencesService {
   constructor(private readonly prisma: PrismaService) {}
 

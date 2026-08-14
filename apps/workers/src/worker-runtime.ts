@@ -6,6 +6,7 @@ import IORedis from 'ioredis';
 import { decryptWebhookSecret } from './secret-cipher';
 import { DeliveryError } from './provider-error';
 import { sendEmail, sendPush } from './providers';
+import { isAllowedWebhookUrl } from './webhook-url';
 
 type DeliveryJob = { deliveryId: string };
 type WebhookJob = { webhookDeliveryId: string };
@@ -44,7 +45,18 @@ export class WorkerRuntime {
     this.workers.push(new Worker<DeliveryJob>('email', (job) => this.processDelivery(job), { connection: this.redis, concurrency: 10 }));
     this.workers.push(new Worker<DeliveryJob>('push', (job) => this.processDelivery(job), { connection: this.redis, concurrency: 20 }));
     this.workers.push(new Worker<DeliveryJob | WebhookJob>('webhook', (job) => job.name === 'webhook.send' ? this.processWebhook(job as Job<WebhookJob>) : this.processDelivery(job as Job<DeliveryJob>), { connection: this.redis, concurrency: 10 }));
-    for (const worker of this.workers) worker.on('failed', (job, error) => void this.sendToDeadLetter(job, error));
+    for (const worker of this.workers) {
+      worker.on('failed', (job, error) => {
+        void this.sendToDeadLetter(job, error).catch((deadLetterError) => {
+          console.error(JSON.stringify({
+            message: 'Unable to enqueue failed job in dead-letter queue',
+            queue: job?.queueName,
+            jobId: job?.id,
+            error: deadLetterError instanceof Error ? deadLetterError.message : String(deadLetterError),
+          }));
+        });
+      });
+    }
     console.info(JSON.stringify({ message: 'Notification workers started', queues: queueNames }));
   }
 
@@ -132,13 +144,14 @@ export class WorkerRuntime {
     if (!delivery || finalWebhookStatuses.includes(delivery.status)) return;
     await this.prisma.webhookDelivery.update({ where: { id: delivery.id }, data: { status: DeliveryStatus.PROCESSING, attempts: { increment: 1 }, errorCode: null, errorMessage: null } });
     try {
+      if (!isAllowedWebhookUrl(delivery.webhook.url)) throw new DeliveryError('PERMANENT_FAILURE', 'Webhook endpoint URL is not allowed.', false);
       const body = JSON.stringify(delivery.payload);
       const signature = createHmac('sha256', decryptWebhookSecret(delivery.webhook.secret)).update(body).digest('hex');
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), Number(process.env.WEBHOOK_TIMEOUT_MS ?? 10_000));
       let response: Response;
       try {
-        response = await fetch(delivery.webhook.url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-notification-signature': `sha256=${signature}`, 'x-notification-event': delivery.event, 'x-notification-id': delivery.notificationId ?? '' }, body, signal: controller.signal });
+        response = await fetch(delivery.webhook.url, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', 'x-notification-signature': `sha256=${signature}`, 'x-notification-event': delivery.event, 'x-notification-id': delivery.notificationId ?? '' }, body, signal: controller.signal });
       } finally { clearTimeout(timeout); }
       if (!response.ok) {
         const retryable = response.status === 408 || response.status === 429 || response.status >= 500;

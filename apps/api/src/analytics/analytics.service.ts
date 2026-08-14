@@ -1,8 +1,6 @@
-import { Injectable } from '@nestjs/common';
 import { DeliveryStatus, NotificationStatus } from '@prisma/client';
 import { PrismaService } from '../common/prisma.service';
 
-@Injectable()
 export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
   async overview(tenantId: string, from = new Date(new Date().setUTCHours(0, 0, 0, 0)), to = new Date()): Promise<Record<string, unknown>> {
@@ -10,7 +8,7 @@ export class AnalyticsService {
     const [total, sent, delivered, failed, pending, channelBreakdown, recentEvents, recentFailures] = await Promise.all([
       this.prisma.notification.count({ where: { tenantId, createdAt: dateRange } }),
       this.prisma.notification.count({ where: { tenantId, status: NotificationStatus.SENT, createdAt: dateRange } }),
-      this.prisma.delivery.count({ where: { tenantId, status: DeliveryStatus.DELIVERED, createdAt: dateRange } }),
+      this.prisma.notification.count({ where: { tenantId, status: NotificationStatus.DELIVERED, createdAt: dateRange } }),
       this.prisma.notification.count({ where: { tenantId, status: NotificationStatus.FAILED, createdAt: dateRange } }),
       this.prisma.notification.count({ where: { tenantId, status: { in: [NotificationStatus.CREATED, NotificationStatus.QUEUED, NotificationStatus.PROCESSING, NotificationStatus.RETRYING] }, createdAt: dateRange } }),
       this.prisma.delivery.groupBy({ by: ['channel', 'status'], where: { tenantId, createdAt: dateRange }, _count: { _all: true } }),

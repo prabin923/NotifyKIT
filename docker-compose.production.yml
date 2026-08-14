@@ -1,0 +1,62 @@
+services:
+  # Run migrations once per release. This file expects externally managed
+  # PostgreSQL and Redis; it intentionally creates no local data volumes.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: ${ENV_FILE:-.env.production}
+    command: ["npx", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: ${ENV_FILE:-.env.production}
+    command: ["node", "apps/api/dist/main.js"]
+    restart: unless-stopped
+    init: true
+    ports:
+      # Keep containers private by default. Terminate TLS at a reverse proxy.
+      - "127.0.0.1:${API_BIND_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/live').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  workers:
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    env_file: ${ENV_FILE:-.env.production}
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "apps/workers/src/main.ts"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+      args:
+        # Browser calls stay on the dashboard's HTTPS origin. The runtime
+        # proxy below is the only component that reaches the private API.
+        NEXT_PUBLIC_API_URL: /api/proxy
+    environment:
+      API_INTERNAL_URL: http://api:3000
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${DASHBOARD_BIND_PORT:-3001}:3001"
+    depends_on:
+      api:
+        condition: service_healthy

@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import { Channel, EventStatus, Priority, Prisma, WorkflowStatus } from '@prisma/client';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
@@ -6,11 +5,14 @@ import { PreferencesService } from '../preferences/preferences.service';
 import { QueueService } from '../queue/queue.service';
 import { TemplatesService } from '../templates/templates.service';
 import { RateLimiterService } from '../common/rate-limiter.service';
-import type { CreateEventDto } from './dto';
+import type { CreateEventDto, UpdateEventDto } from './dto';
 
 interface WorkflowChoice { channels: Channel[]; category: string; priority: Priority }
 
-@Injectable()
+function jsonObject(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } as Record<string, Prisma.JsonValue> : {};
+}
+
 export class EventsService {
   constructor(
     private readonly prisma: PrismaService,
@@ -73,5 +75,17 @@ export class EventsService {
     });
     await this.queue.flushOutbox();
     return result;
+  }
+
+  async update(tenantId: string, eventId: string, input: UpdateEventDto) {
+    const existing = await this.prisma.event.findFirst({ where: { id: eventId, tenantId } });
+    if (!existing) throw new ApiError('EVENT_NOT_FOUND', 'Event not found.', 404);
+
+    const data: Prisma.EventUpdateInput = {};
+    if (input.event !== undefined) data.eventType = input.event;
+    if (input.external_event_id !== undefined) data.externalEventId = input.external_event_id;
+    if (input.data !== undefined) data.payload = { ...jsonObject(existing.payload), data: input.data } as Prisma.InputJsonValue;
+
+    return this.prisma.event.update({ where: { id: existing.id }, data });
   }
 }

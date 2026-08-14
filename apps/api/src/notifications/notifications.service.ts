@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import { Channel, DeliveryStatus, NotificationStatus, Priority } from '@prisma/client';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
@@ -8,7 +7,6 @@ import { assertNotificationTransition } from './notification-state';
 import type { CreateNotificationDto } from './dto';
 import { RateLimiterService } from '../common/rate-limiter.service';
 
-@Injectable()
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService, private readonly preferences: PreferencesService, private readonly queue: QueueService, private readonly rateLimiter: RateLimiterService) {}
 

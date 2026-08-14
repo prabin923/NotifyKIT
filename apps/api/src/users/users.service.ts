@@ -1,9 +1,7 @@
-import { Injectable } from '@nestjs/common';
 import { DevicePlatform } from '@prisma/client';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
 
-@Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
   async list(tenantId: string) { return this.prisma.user.findMany({ where: { tenantId }, orderBy: { updatedAt: 'desc' }, take: 100 }); }

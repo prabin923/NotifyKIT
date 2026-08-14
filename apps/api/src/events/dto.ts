@@ -15,3 +15,9 @@ export class CreateEventDto {
   @ValidateNested() @Type(() => EventUserDto) user!: EventUserDto;
   @IsOptional() @IsObject() data?: Record<string, unknown>;
 }
+
+export class UpdateEventDto {
+  @IsOptional() @IsString() @Matches(/^[a-z][a-z0-9]*(\.[a-z][a-z0-9_-]*)+$/) @MaxLength(160) event?: string;
+  @IsOptional() @IsString() @MaxLength(255) external_event_id?: string | null;
+  @IsOptional() @IsObject() data?: Record<string, unknown>;
+}

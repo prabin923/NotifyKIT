@@ -10,6 +10,7 @@ const prisma = databaseUrl?.startsWith('prisma://') || databaseUrl?.startsWith('
   : new PrismaClient();
 
 async function main(): Promise<void> {
+  if (process.env.NODE_ENV === 'production') throw new Error('Refusing to create demo credentials in production.');
   const pepper = process.env.API_KEY_PEPPER ?? 'local-development-pepper-only';
   const rawKey = `nk_test_${randomBytes(24).toString('base64url')}`;
   const tenant = await prisma.tenant.upsert({

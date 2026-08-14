@@ -1,4 +1,3 @@
-import { INestApplication, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { withAccelerate } from '@prisma/extension-accelerate';
 
@@ -6,8 +5,7 @@ function isAccelerateUrl(url: string | undefined): url is string {
   return Boolean(url?.startsWith('prisma://') || url?.startsWith('prisma+postgres://'));
 }
 
-@Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService extends PrismaClient {
   constructor() {
     const databaseUrl = process.env.DATABASE_URL;
     super(isAccelerateUrl(databaseUrl) ? { datasourceUrl: databaseUrl } : undefined);
@@ -17,15 +15,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
   }
 
-  async onModuleInit(): Promise<void> {
+  async connect(): Promise<void> {
     await this.$connect();
   }
 
-  async onModuleDestroy(): Promise<void> {
+  async disconnect(): Promise<void> {
     await this.$disconnect();
   }
 
-  enableShutdownHooks(app: INestApplication): void {
-    process.on('beforeExit', () => app.close());
-  }
 }

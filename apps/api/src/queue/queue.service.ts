@@ -1,5 +1,3 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { Prisma, type PrismaClient } from '@prisma/client';
@@ -7,24 +5,33 @@ import { PrismaService } from '../common/prisma.service';
 import { ApiError } from '../common/api-error';
 import { QUEUE_NAMES, type QueueName } from './queue.constants';
 
-@Injectable()
-export class QueueService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(QueueService.name);
+export class QueueService {
   private connection!: IORedis;
   private readonly queues = new Map<QueueName, Queue>();
+  private flushTimer?: NodeJS.Timeout;
+  private flushing?: Promise<number>;
 
-  constructor(private readonly config: ConfigService, private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async onModuleInit(): Promise<void> {
-    const redisUrl = this.config.get<string>('REDIS_URL');
+  async start(): Promise<void> {
+    const redisUrl = process.env.REDIS_URL;
     if (!redisUrl) throw new Error('REDIS_URL is required');
     this.connection = new IORedis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
     await this.connection.ping();
     for (const queueName of Object.values(QUEUE_NAMES)) this.queues.set(queueName, new Queue(queueName, { connection: this.connection }));
     await this.flushOutbox();
+    const interval = Number(process.env.OUTBOX_FLUSH_INTERVAL_MS ?? 5_000);
+    if (!Number.isSafeInteger(interval) || interval < 100) throw new Error('OUTBOX_FLUSH_INTERVAL_MS must be an integer of at least 100 milliseconds');
+    this.flushTimer = setInterval(() => {
+      void this.flushOutbox().catch((error: unknown) => {
+        console.error(`Unable to retry pending outbox jobs: ${error instanceof Error ? error.message : 'Unknown queue error'}`);
+      });
+    }, interval);
+    this.flushTimer.unref();
   }
 
-  async onModuleDestroy(): Promise<void> {
+  async stop(): Promise<void> {
+    if (this.flushTimer) clearInterval(this.flushTimer);
     await Promise.all([...this.queues.values()].map((queue) => queue.close()));
     await this.connection?.quit();
   }
@@ -34,6 +41,17 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   async flushOutbox(): Promise<number> {
+    if (this.flushing) return this.flushing;
+    const pending = this.flushPendingOutbox();
+    this.flushing = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.flushing === pending) this.flushing = undefined;
+    }
+  }
+
+  private async flushPendingOutbox(): Promise<number> {
     const pending = await this.prisma.outboxJob.findMany({ where: { processedAt: null }, orderBy: { createdAt: 'asc' }, take: 100 });
     let flushed = 0;
     for (const record of pending) {
@@ -48,7 +66,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         flushed += 1;
       } catch (error) {
         await this.prisma.outboxJob.update({ where: { id: record.id }, data: { attempts: { increment: 1 }, lastError: error instanceof Error ? error.message.slice(0, 1000) : 'Unknown queue error' } });
-        this.logger.error(`Unable to enqueue outbox job ${record.id}`);
+        console.error(`Unable to enqueue outbox job ${record.id}`);
         throw new ApiError('QUEUE_UNAVAILABLE', 'Notification queue is temporarily unavailable. The event was not accepted.', 503);
       }
     }

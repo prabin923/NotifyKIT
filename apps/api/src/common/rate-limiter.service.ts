@@ -1,15 +1,17 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import IORedis from 'ioredis';
 import { ApiError } from './api-error';
 import { PrismaService } from './prisma.service';
 
-@Injectable()
-export class RateLimiterService implements OnModuleInit, OnModuleDestroy {
+export class RateLimiterService {
   private redis!: IORedis;
-  constructor(private readonly config: ConfigService, private readonly prisma: PrismaService) {}
-  async onModuleInit(): Promise<void> { this.redis = new IORedis(this.config.getOrThrow<string>('REDIS_URL'), { maxRetriesPerRequest: 1 }); await this.redis.ping(); }
-  async onModuleDestroy(): Promise<void> { await this.redis?.quit(); }
+  constructor(private readonly prisma: PrismaService) {}
+  async start(): Promise<void> {
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) throw new Error('REDIS_URL is required');
+    this.redis = new IORedis(redisUrl, { maxRetriesPerRequest: 1 });
+    await this.redis.ping();
+  }
+  async stop(): Promise<void> { await this.redis?.quit(); }
 
   private async consume(scope: string, limit: number, seconds: number): Promise<void> {
     const bucket = Math.floor(Date.now() / (seconds * 1000));
