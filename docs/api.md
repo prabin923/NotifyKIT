@@ -28,6 +28,11 @@ replays safe.
 
 The same key returns the original event with `idempotent_replay: true`.
 
+Dashboard users can edit a recorded event with `PATCH /v1/dashboard/events/:id`.
+The request may include `event`, `external_event_id` (or `null` to clear it),
+and `data`. Edits update the stored event metadata only: they do not re-run a
+workflow, requeue notifications, or modify the original user snapshot.
+
 ## Notifications
 
 `POST /v1/notifications` requires `notifications:write` and returns `202`.
@@ -46,7 +51,7 @@ notifications cannot be cancelled.
 | `GET/POST/PATCH /v1/templates` | `templates:read` / `templates:write` | Versioned channel templates |
 | `GET/POST/PATCH /v1/workflows` | `workflows:manage` | JSON workflow definitions |
 | `GET/PUT /v1/users/:externalUserId/preferences` | `users:manage` | Category/channel preferences |
-| `GET/POST/PATCH /v1/webhooks` | `webhooks:manage` | HTTPS webhook subscriptions |
+| `GET/POST/PATCH /v1/webhooks` | `webhooks:manage` | Public HTTPS webhook subscriptions (no private/local targets or redirects) |
 | `GET /v1/analytics` | `analytics:read` | Current-period operational metrics |
 
 ## Dashboard and key management

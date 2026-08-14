@@ -1,11 +1,9 @@
-import { Injectable } from '@nestjs/common';
 import { Channel, TemplateStatus } from '@prisma/client';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
 
 export interface TemplateContext { user: { id: string; name?: string | null; email?: string | null; phone?: string | null }; data: Record<string, unknown> }
 
-@Injectable()
 export class TemplatesService {
   constructor(private readonly prisma: PrismaService) {}
 

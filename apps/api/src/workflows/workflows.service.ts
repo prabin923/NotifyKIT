@@ -1,9 +1,7 @@
-import { Injectable } from '@nestjs/common';
 import { Prisma, WorkflowStatus } from '@prisma/client';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
 
-@Injectable()
 export class WorkflowsService {
   constructor(private readonly prisma: PrismaService) {}
   private validateDefinition(definition: Record<string, unknown>): void {

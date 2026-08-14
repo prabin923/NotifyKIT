@@ -7,7 +7,7 @@ later without changing the public event contract.
 
 ```mermaid
 flowchart LR
-  C[Client system] -->|API key + REST| A[NestJS API]
+  C[Client system] -->|API key + REST| A[Express API]
   A -->|tenant-scoped transaction| P[(PostgreSQL)]
   A -->|jobs| R[(Redis / BullMQ)]
   R --> W[Workers]

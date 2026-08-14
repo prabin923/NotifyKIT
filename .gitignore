@@ -9,3 +9,5 @@ apps/api/prisma/test.db
 .prisma/
 .vercel
 .env*
+!.env.example
+!.env.production.example

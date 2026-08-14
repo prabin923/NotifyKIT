@@ -1,6 +1,4 @@
-import { Injectable } from '@nestjs/common';
 import { ApiKeyStatus } from '@prisma/client';
-import { ConfigService } from '@nestjs/config';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
@@ -8,12 +6,11 @@ import type { ApiClientContext } from '../common/request-context';
 
 const VALID_PERMISSIONS = new Set(['events:write', 'notifications:read', 'notifications:write', 'templates:read', 'templates:write', 'analytics:read', 'webhooks:manage', 'workflows:manage', 'users:manage', 'devices:manage']);
 
-@Injectable()
 export class ApiKeysService {
-  constructor(private readonly prisma: PrismaService, private readonly config: ConfigService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private hash(rawKey: string): string {
-    const pepper = this.config.get<string>('API_KEY_PEPPER');
+    const pepper = process.env.API_KEY_PEPPER;
     if (!pepper || pepper.length < 24) throw new ApiError('SERVER_MISCONFIGURED', 'API key authentication is not configured.', 503);
     return createHash('sha256').update(`${pepper}:${rawKey}`).digest('hex');
   }

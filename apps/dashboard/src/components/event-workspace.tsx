@@ -8,8 +8,16 @@ interface EventRecord {
   id: string;
   eventType: string;
   externalEventId: string | null;
+  payload: unknown;
   status: string;
   createdAt: string;
+}
+
+interface EditDraft {
+  id: string;
+  event: string;
+  externalEventId: string;
+  data: string;
 }
 
 function optionalValue(value: FormDataEntryValue | null): string | undefined {
@@ -17,9 +25,23 @@ function optionalValue(value: FormDataEntryValue | null): string | undefined {
   return normalized || undefined;
 }
 
+function eventData(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const data = (payload as Record<string, unknown>).data;
+  return data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
+}
+
+function parseEventData(rawData: string, emptyValue: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!rawData) return emptyValue;
+  const parsed: unknown = JSON.parse(rawData);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('Event data must be a JSON object.');
+  return parsed as Record<string, unknown>;
+}
+
 export function EventWorkspace() {
   const [items, setItems] = useState<EventRecord[]>([]);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<EditDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -40,13 +62,8 @@ export function EventWorkspace() {
     event.preventDefault();
     const formElement = event.currentTarget; const form = new FormData(formElement);
     const rawData = String(form.get('data') ?? '').trim();
-    let data: Record<string, unknown> | undefined;
     try {
-      if (rawData) {
-        const parsed: unknown = JSON.parse(rawData);
-        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('Event data must be a JSON object.');
-        data = parsed as Record<string, unknown>;
-      }
+      const data = parseEventData(rawData, undefined);
       setBusy(true);
       setError('');
       const token = window.localStorage.getItem('notification-dashboard-token');
@@ -76,10 +93,44 @@ export function EventWorkspace() {
     }
   };
 
-  return <><PageIntro eyebrow="Event intake" title="Events" description="Create universal events to trigger active workflows and notification templates for this tenant." action={<PrimaryButton onClick={() => setOpen((value) => !value)}>{open ? 'Close composer' : 'Create event'}</PrimaryButton>} />
+  const startEditing = (item: EventRecord) => {
+    setOpen(false);
+    setError('');
+    setEditing({ id: item.id, event: item.eventType, externalEventId: item.externalEventId ?? '', data: JSON.stringify(eventData(item.payload), null, 2) });
+  };
+
+  const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editing) return;
+    try {
+      const data = parseEventData(editing.data.trim(), {});
+      setBusy(true);
+      setError('');
+      const token = window.localStorage.getItem('notification-dashboard-token');
+      if (!token) throw new Error('Sign in again to edit an event.');
+      await dashboardFetch<EventRecord>(`/v1/dashboard/events/${editing.id}`, token, {
+        method: 'PATCH',
+        body: {
+          event: editing.event.trim(),
+          external_event_id: editing.externalEventId.trim() || null,
+          data,
+        },
+      });
+      setEditing(null);
+      setMessage('Event metadata updated. Existing deliveries were not changed.');
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to update event');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <><PageIntro eyebrow="Event intake" title="Events" description="Create universal events to trigger active workflows and notification templates for this tenant." action={<PrimaryButton onClick={() => { setEditing(null); setOpen((value) => !value); }}>{open ? 'Close composer' : 'Create event'}</PrimaryButton>} />
     {message && <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</div>}
     {error && <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
     {open && <form onSubmit={submit} className="mb-6 rounded-xl border border-indigo-100 bg-indigo-50/50 p-5 shadow-sm"><div className="grid gap-4 md:grid-cols-2"><Input label="Event type" name="event" placeholder="order.created" pattern="[a-z][a-z0-9]*(\.[a-z][a-z0-9_-]*)+" title="Use dot-separated lowercase words, for example order.created." required /><Input label="External event ID (optional)" name="external_event_id" placeholder="order_123" /><Input label="User ID" name="user_id" placeholder="user_123" required /><Input label="User name (optional)" name="name" placeholder="Aarav Sharma" /><Input label="User email (optional)" name="email" type="email" placeholder="aarav@example.com" /><Input label="Idempotency key (optional)" name="idempotency_key" placeholder="order_123.created" /><div className="md:col-span-2"><Textarea label="Event data (optional JSON object)" name="data" placeholder={'{\n  "order_total": 2500,\n  "currency": "NPR"\n}'} /></div></div><div className="mt-5"><PrimaryButton type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create event'}</PrimaryButton></div></form>}
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Event type</th><th className="px-5 py-3">External ID</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Created</th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((item) => <tr key={item.id} className="hover:bg-slate-50"><td className="px-5 py-4 font-medium text-slate-900">{item.eventType}</td><td className="px-5 py-4 text-slate-600">{item.externalEventId ?? '—'}</td><td className="px-5 py-4"><StatusPill value={item.status} /></td><td className="whitespace-nowrap px-5 py-4 text-slate-500">{new Date(item.createdAt).toLocaleString()}</td></tr>)}{!items.length && <tr><td colSpan={4} className="px-5 py-12 text-center text-slate-500">No events have been created yet.</td></tr>}</tbody></table></div></section>
+    {editing && <form onSubmit={submitEdit} className="mb-6 rounded-xl border border-amber-200 bg-amber-50/60 p-5 shadow-sm"><div className="mb-4"><h3 className="text-base font-semibold text-slate-950">Edit event</h3><p className="mt-1 text-sm leading-6 text-slate-600">Changes update this event record only. Existing notifications and deliveries are not re-run or changed.</p></div><div className="grid gap-4 md:grid-cols-2"><Input label="Event type" value={editing.event} onChange={(input) => setEditing({ ...editing, event: input.target.value })} pattern="[a-z][a-z0-9]*(\.[a-z][a-z0-9_-]*)+" title="Use dot-separated lowercase words, for example order.created." required /><Input label="External event ID (optional)" value={editing.externalEventId} onChange={(input) => setEditing({ ...editing, externalEventId: input.target.value })} placeholder="order_123" /><div className="md:col-span-2"><Textarea label="Event data (JSON object)" value={editing.data} onChange={(input) => setEditing({ ...editing, data: input.target.value })} required /></div></div><div className="mt-5 flex gap-3"><PrimaryButton type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save event'}</PrimaryButton><button type="button" onClick={() => setEditing(null)} disabled={busy} className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">Cancel</button></div></form>}
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"><div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Event type</th><th className="px-5 py-3">External ID</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Created</th><th className="px-5 py-3"><span className="sr-only">Actions</span></th></tr></thead><tbody className="divide-y divide-slate-100">{items.map((item) => <tr key={item.id} className="hover:bg-slate-50"><td className="px-5 py-4 font-medium text-slate-900">{item.eventType}</td><td className="px-5 py-4 text-slate-600">{item.externalEventId ?? '—'}</td><td className="px-5 py-4"><StatusPill value={item.status} /></td><td className="whitespace-nowrap px-5 py-4 text-slate-500">{new Date(item.createdAt).toLocaleString()}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => startEditing(item)} className="font-semibold text-indigo-600 transition hover:text-indigo-500">Edit</button></td></tr>)}{!items.length && <tr><td colSpan={5} className="px-5 py-12 text-center text-slate-500">No events have been created yet.</td></tr>}</tbody></table></div></section>
   </>;
 }

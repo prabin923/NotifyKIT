@@ -1,14 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { ApiError } from './api-error';
 
-@Injectable()
 export class SecretCipherService {
-  constructor(private readonly config: ConfigService) {}
-
   private key(): Buffer {
-    const encoded = this.config.get<string>('WEBHOOK_ENCRYPTION_KEY');
+    const encoded = process.env.WEBHOOK_ENCRYPTION_KEY;
     const key = encoded ? Buffer.from(encoded, 'base64') : Buffer.alloc(0);
     if (key.length !== 32) throw new ApiError('SERVER_MISCONFIGURED', 'Webhook encryption is not configured.', 503);
     return key;

@@ -1,7 +1,14 @@
 node_modules
+**/node_modules
 .next
+**/.next
+**/dist
 coverage
+**/coverage
+*.tsbuildinfo
 .git
 .env
 *.log
 .DS_Store
+**/.DS_Store
+dump.rdb

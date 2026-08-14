@@ -7,7 +7,7 @@ asynchronously through replaceable channels.
 
 ## Features
 
-- NestJS REST API with OpenAPI at `/docs`, structured error envelopes, request IDs, health checks, API keys, dashboard JWTs, and RBAC.
+- Express REST API with API reference at `/docs`, structured error envelopes, request IDs, health checks, API keys, dashboard JWTs, and RBAC.
 - PostgreSQL/Prisma tenant isolation, indexes, compound idempotency, audit logs, encrypted webhook secrets, and transactional outbox.
 - BullMQ/Redis email, push, webhook, retry, and dead-letter architecture.
 - Real SMTP and FCM integrations when configured; safe console delivery adapters for local use.
@@ -47,11 +47,25 @@ npm run prisma:seed
 npm run dev
 ```
 
-API: `http://localhost:3000`; Swagger: `http://localhost:3000/docs`; dashboard:
+The API and worker start commands load the root `.env` file automatically.
+
+API: `http://localhost:3000`; API reference: `http://localhost:3000/docs`; dashboard:
 `http://localhost:3001`; local Mailpit: `http://localhost:8025`.
 
+When running the dashboard on another local port, set both
+`DASHBOARD_PORT` and `DASHBOARD_ORIGIN` (for example, `3101` and
+`http://localhost:3101`) before starting Compose so browser CORS remains valid.
+
 For all containers, run `docker compose up --build`. Docker expects an `.env`
-and applies the reviewed initial migration with `prisma migrate deploy`.
+and synchronizes the local database schema. Run `prisma migrate deploy` in a
+production deployment pipeline. The dashboard now keeps browser traffic on its
+own origin through `/api/proxy/*`; `API_INTERNAL_URL` is used only by the
+dashboard server to reach the API, so browsers never need direct access to a
+private API port.
+
+For a long-running production worker, use the separate production Compose
+profile documented in [docs/deployment.md](docs/deployment.md). It restarts the
+worker process after a failure and keeps it independent from HTTP API replicas.
 
 ## Demo event
 
@@ -90,6 +104,8 @@ not a required integration path.
 SMTP requires `SMTP_*`; set `EMAIL_PROVIDER=smtp`. FCM requires the three
 `FCM_*` values and `PUSH_PROVIDER=fcm`. Webhook secrets are AES-256-GCM encrypted
 at rest and requests are signed as `X-Notification-Signature: sha256=...`.
+Webhook endpoints must be public HTTPS hostnames; loopback, private IP, local,
+internal, credential-bearing, and redirect targets are rejected.
 
 Never commit `.env`, raw API keys, credentials, or secret-manager exports.
 Tenant identity is always resolved from server-side credentials, not the body.
@@ -99,7 +115,8 @@ Tenant identity is always resolved from server-side credentials, not the body.
 ```bash
 npm run build
 npm test
-npm run test:e2e
+TEST_DATABASE_URL=postgresql://notification:notification@localhost:5432/notification_platform?schema=public \
+TEST_REDIS_URL=redis://localhost:6379/15 npm run test:e2e
 git diff --check
 ```
 

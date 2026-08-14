@@ -6,7 +6,13 @@ export default defineComputeConfig({
     api: {
       name: 'notifykit-api',
       root: 'apps/api',
-      framework: 'nestjs',
+      framework: 'custom',
+      httpPort: 3000,
+      build: {
+        command: 'npm run build:compute',
+        outputDirectory: 'dist',
+        entrypoint: 'main.js',
+      },
     },
   },
 });
