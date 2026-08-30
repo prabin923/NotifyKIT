@@ -50,6 +50,8 @@ async function main(): Promise<void> {
   });
 
   console.log('Demo dashboard user seeded.');
+  console.log('Dashboard login: owner@example.test / ChangeMe123!');
+  console.log(`Demo API key (save now): ${rawKey}`);
 }
 
 main().finally(() => prisma.$disconnect());

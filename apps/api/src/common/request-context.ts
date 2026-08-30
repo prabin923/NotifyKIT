@@ -14,8 +14,15 @@ export interface DashboardUserContext {
   email: string;
 }
 
+export interface EndUserContext {
+  id: string;
+  tenantId: string;
+  externalId: string;
+}
+
 export interface PlatformRequest extends Request {
   requestId: string;
   apiClient?: ApiClientContext;
   dashboardUser?: DashboardUserContext;
+  endUser?: EndUserContext;
 }

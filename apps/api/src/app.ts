@@ -20,6 +20,9 @@ import { SecretCipherService } from './common/secret-cipher.service';
 import { validateBody } from './common/validation';
 import { CreateEventDto, UpdateEventDto } from './events/dto';
 import { EventsService } from './events/events.service';
+import type { InboxStatusFilter } from './inbox/dto';
+import { InboxService } from './inbox/inbox.service';
+import { UserTokenService } from './inbox/user-token.service';
 import { CreateNotificationDto } from './notifications/dto';
 import { NotificationsService } from './notifications/notifications.service';
 import { UpsertPreferenceDto } from './preferences/dto';
@@ -27,7 +30,7 @@ import { PreferencesService } from './preferences/preferences.service';
 import { QueueService } from './queue/queue.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './templates/dto';
 import { TemplatesService } from './templates/templates.service';
-import { RegisterDeviceDto } from './users/dto';
+import { CreateUserDto, RegisterDeviceDto, UpdateUserDto } from './users/dto';
 import { UsersService } from './users/users.service';
 import { CreateWebhookDto, UpdateWebhookDto } from './webhooks/dto';
 import { WebhooksService } from './webhooks/webhooks.service';
@@ -51,6 +54,7 @@ function validateConfiguration(): void {
     REDIS_URL: Joi.string().uri({ scheme: ['redis', 'rediss'] }).required(),
     JWT_SECRET: Joi.string().min(32).required(),
     JWT_EXPIRES_IN: Joi.string().default('15m'),
+    USER_TOKEN_EXPIRES_IN: Joi.string().default('1h'),
     API_KEY_PEPPER: Joi.string().min(24).required(),
     WEBHOOK_ENCRYPTION_KEY: Joi.string().required(),
     API_PORT: Joi.number().port().default(3000),
@@ -94,10 +98,31 @@ function dashboardAuthentication(auth: AuthService, roles: DashboardRole[] = [])
   });
 }
 
+function endUserAuthentication(userTokens: UserTokenService, rateLimiter: RateLimiterService): RequestHandler {
+  return asyncHandler(async (request, response, next) => {
+    const authorization = request.header('authorization');
+    if (!authorization?.startsWith('Bearer ')) throw new ApiError('UNAUTHORIZED', 'End-user bearer token is required.', 401);
+    const endUser = await userTokens.verify(authorization.slice(7));
+    request.endUser = endUser;
+    try {
+      await rateLimiter.consumeEndUserRequest(endUser.tenantId, endUser.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'RATE_LIMITED') response.setHeader('retry-after', String(error.details?.retry_after_seconds ?? 60));
+      throw error;
+    }
+    next();
+  });
+}
+
 function enumValue<T extends Record<string, string>>(value: unknown, values: T, field: string): T[keyof T] | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !Object.values(values).includes(value)) throw new ApiError('INVALID_REQUEST', `${field} is invalid.`, 400);
   return value as T[keyof T];
+}
+
+function enumStringValue<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
+  if (typeof value !== 'string' || !allowed.includes(value as T)) throw new ApiError('INVALID_REQUEST', `${field} is invalid.`, 400);
+  return value as T;
 }
 
 function optionalDate(value: unknown, field: string): Date | undefined {
@@ -119,13 +144,13 @@ export interface ExpressApi {
   close(): Promise<void>;
 }
 
-export async function createExpressApi(): Promise<ExpressApi> {
+export async function createExpressApi(options?: { serverless?: boolean }): Promise<ExpressApi> {
   validateConfiguration();
   const prisma = new PrismaService();
   await prisma.connect();
   const queue = new QueueService(prisma);
   const rateLimiter = new RateLimiterService(prisma);
-  await Promise.all([queue.start(), rateLimiter.start()]);
+  await Promise.all([queue.start(options), rateLimiter.start()]);
 
   const audit = new AuditService(prisma);
   const apiKeys = new ApiKeysService(prisma);
@@ -139,6 +164,8 @@ export async function createExpressApi(): Promise<ExpressApi> {
   const webhooks = new WebhooksService(prisma, cipher);
   const workflows = new WorkflowsService(prisma);
   const analytics = new AnalyticsService(prisma);
+  const userTokens = new UserTokenService(prisma);
+  const inbox = new InboxService(prisma);
   const app = express();
   const origins = (process.env.CORS_ORIGINS ?? process.env.DASHBOARD_URL ?? 'http://localhost:3001').split(',').map((value) => value.trim());
 
@@ -238,6 +265,28 @@ export async function createExpressApi(): Promise<ExpressApi> {
     const body = await validateBody(RegisterDeviceDto, request.body);
     respond(request, response, await users.registerDevice(request.apiClient!.tenantId, routeParam(request, 'externalUserId'), { deviceToken: body.device_token, platform: body.platform, appVersion: body.app_version }), 201);
   }));
+  // A customer's backend calls this with its secret API key to mint a short-lived, browser-safe
+  // token; the browser then authenticates directly against /v1/inbox with that token.
+  app.post('/v1/users/:externalUserId/token', requiredApiPermissions(apiKeys, rateLimiter, ['users:manage']), asyncHandler(async (request, response) => {
+    const result = await userTokens.mint(request.apiClient!.tenantId, routeParam(request, 'externalUserId'));
+    respond(request, response, { token: result.token, expires_at: result.expires_at }, 201);
+  }));
+
+  const endUser = endUserAuthentication(userTokens, rateLimiter);
+  app.get('/v1/inbox', endUser, asyncHandler(async (request, response) => {
+    const status = request.query.status === undefined ? undefined : enumStringValue(request.query.status, ['unread', 'read', 'all'], 'status');
+    const limit = request.query.limit === undefined ? undefined : Number(request.query.limit);
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new ApiError('INVALID_REQUEST', 'limit must be a positive integer.', 400);
+    const cursor = typeof request.query.cursor === 'string' ? request.query.cursor : undefined;
+    const archived = request.query.archived === undefined ? undefined : enumStringValue(request.query.archived, ['true', 'false'], 'archived') === 'true';
+    respond(request, response, await inbox.list(request.endUser!.tenantId, request.endUser!.id, { limit, cursor, status: status as InboxStatusFilter | undefined, archived }));
+  }));
+  app.get('/v1/inbox/count', endUser, asyncHandler(async (request, response) => respond(request, response, await inbox.count(request.endUser!.tenantId, request.endUser!.id))));
+  app.post('/v1/inbox/read-all', endUser, asyncHandler(async (request, response) => respond(request, response, await inbox.readAll(request.endUser!.tenantId, request.endUser!.id))));
+  app.post('/v1/inbox/:id/read', endUser, asyncHandler(async (request, response) => respond(request, response, await inbox.read(request.endUser!.tenantId, request.endUser!.id, routeParam(request, 'id')))));
+  app.post('/v1/inbox/:id/unread', endUser, asyncHandler(async (request, response) => respond(request, response, await inbox.unread(request.endUser!.tenantId, request.endUser!.id, routeParam(request, 'id')))));
+  app.post('/v1/inbox/:id/seen', endUser, asyncHandler(async (request, response) => respond(request, response, await inbox.seen(request.endUser!.tenantId, request.endUser!.id, routeParam(request, 'id')))));
+  app.post('/v1/inbox/:id/archive', endUser, asyncHandler(async (request, response) => respond(request, response, await inbox.archive(request.endUser!.tenantId, request.endUser!.id, routeParam(request, 'id')))));
 
   app.get('/v1/webhooks', requiredApiPermissions(apiKeys, rateLimiter, ['webhooks:manage']), asyncHandler(async (request, response) => respond(request, response, await webhooks.list(request.apiClient!.tenantId))));
   app.post('/v1/webhooks', requiredApiPermissions(apiKeys, rateLimiter, ['webhooks:manage']), asyncHandler(async (request, response) => {
@@ -272,12 +321,25 @@ export async function createExpressApi(): Promise<ExpressApi> {
   app.get('/v1/dashboard/webhooks', dashboard, asyncHandler(async (request, response) => respond(request, response, await prisma.webhook.findMany({ where: { tenantId: request.dashboardUser!.tenantId }, select: { id: true, url: true, events: true, status: true, createdAt: true, updatedAt: true, _count: { select: { deliveries: true } } }, orderBy: { createdAt: 'desc' } }))));
   app.get('/v1/dashboard/api-keys', dashboard, asyncHandler(async (request, response) => respond(request, response, await prisma.apiKey.findMany({ where: { tenantId: request.dashboardUser!.tenantId }, select: { id: true, name: true, prefix: true, permissions: true, status: true, expiresAt: true, lastUsedAt: true, createdAt: true }, orderBy: { createdAt: 'desc' } }))));
   app.get('/v1/dashboard/audit-logs', dashboard, asyncHandler(async (request, response) => respond(request, response, await prisma.auditLog.findMany({ where: { tenantId: request.dashboardUser!.tenantId }, include: { actor: { select: { email: true, name: true } } }, orderBy: { createdAt: 'desc' }, take: 100 }))));
+  app.get('/v1/dashboard/inbox', dashboard, asyncHandler(async (request, response) => respond(request, response, await inbox.dashboardList(request.dashboardUser!.tenantId))));
   app.get('/v1/dashboard/channels', dashboard, asyncHandler(async (request, response) => respond(request, response, await prisma.delivery.groupBy({ by: ['channel', 'status'], where: { tenantId: request.dashboardUser!.tenantId }, _count: { _all: true } }))));
-  app.get('/v1/dashboard/providers', dashboard, (request, response) => respond(request as PlatformRequest, response, { email: { mode: process.env.EMAIL_PROVIDER ?? 'console', smtp_configured: Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM) }, push: { mode: process.env.PUSH_PROVIDER ?? 'console', fcm_configured: Boolean(process.env.FCM_PROJECT_ID && process.env.FCM_CLIENT_EMAIL && process.env.FCM_PRIVATE_KEY) }, webhook: { signing: 'HMAC SHA-256', encrypted_secrets: true } }));
+  app.get('/v1/dashboard/providers', dashboard, (request, response) => {
+    const smtpFrom = process.env.EMAIL_FROM ?? process.env.SMTP_FROM;
+    const smtpPassword = process.env.RESEND_API_KEY ?? process.env.SMTP_PASSWORD;
+    respond(request as PlatformRequest, response, { email: { mode: process.env.EMAIL_PROVIDER ?? 'console', smtp_configured: Boolean(process.env.SMTP_HOST && smtpFrom && (!process.env.SMTP_USER || smtpPassword)) }, push: { mode: process.env.PUSH_PROVIDER ?? 'console', fcm_configured: Boolean(process.env.FCM_PROJECT_ID && process.env.FCM_CLIENT_EMAIL && process.env.FCM_PRIVATE_KEY) }, webhook: { signing: 'HMAC SHA-256', encrypted_secrets: true } });
+  });
   app.get('/v1/dashboard/settings', dashboard, asyncHandler(async (request, response) => respond(request, response, await prisma.tenant.findFirst({ where: { id: request.dashboardUser!.tenantId }, select: { id: true, name: true, slug: true, plan: true, status: true, tenantPolicy: true } }))));
   app.post('/v1/dashboard/notifications', dashboard, asyncHandler(async (request, response) => {
     const body = await validateBody(CreateNotificationDto, request.body);
     respond(request, response, await notifications.create(request.dashboardUser!.tenantId, body), 202);
+  }));
+  app.post('/v1/dashboard/users', dashboard, asyncHandler(async (request, response) => {
+    const body = await validateBody(CreateUserDto, request.body);
+    respond(request, response, await users.create(request.dashboardUser!.tenantId, body), 201);
+  }));
+  app.patch('/v1/dashboard/users/:id', dashboard, asyncHandler(async (request, response) => {
+    const body = await validateBody(UpdateUserDto, request.body);
+    respond(request, response, await users.update(request.dashboardUser!.tenantId, routeParam(request, 'id'), body));
   }));
   app.post('/v1/dashboard/events', dashboard, asyncHandler(async (request, response) => {
     const body = await validateBody(CreateEventDto, request.body);

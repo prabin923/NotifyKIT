@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { apiUrl } from '../lib/api';
 
 const links = [
-  ['Dashboard', '/'], ['Notifications', '/notifications'], ['Events', '/events'], ['Templates', '/templates'], ['Workflows', '/workflows'], ['Users', '/users'], ['Devices', '/devices'], ['Channels', '/channels'], ['Providers', '/providers'], ['Webhooks', '/webhooks'], ['Analytics', '/analytics'], ['API Keys', '/api-keys'], ['Logs', '/logs'], ['Settings', '/settings'],
+  ['Dashboard', '/'], ['Notifications', '/notifications'], ['Inbox', '/inbox'], ['Events', '/events'], ['Templates', '/templates'], ['Workflows', '/workflows'], ['Users', '/users'], ['Devices', '/devices'], ['Channels', '/channels'], ['Providers', '/providers'], ['Webhooks', '/webhooks'], ['Analytics', '/analytics'], ['API Keys', '/api-keys'], ['Logs', '/logs'], ['Settings', '/settings'],
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {

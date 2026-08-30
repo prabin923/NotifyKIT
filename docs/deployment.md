@@ -42,6 +42,27 @@ the exact public dashboard origin. The browser always calls the dashboard's
 same-origin `/api/proxy/*` route; the dashboard container reaches the private
 API through `API_INTERNAL_URL=http://api:3000`.
 
+## Vercel serverless deployment
+
+`api/index.js` exposes the Express API as a Vercel serverless function, and
+`vercel.json` rewrites only `/v1/*`, `/health/*`, and `/docs` to it — the
+dashboard's own routes are left alone. Be honest with yourself about the
+limits of this path before choosing it:
+
+- It serves the HTTP API only. BullMQ workers (`apps/workers`) are a
+  long-running process with persistent connections and must be deployed as a
+  container or other always-on worker, never as a serverless function.
+- It requires hosted, publicly reachable PostgreSQL and Redis; there is no
+  local `docker-compose` network to fall back on.
+- Each cold start calls `createExpressApi({ serverless: true })`, which skips
+  installing the recurring outbox-flush timer (`QueueService.start`) — a
+  serverless instance can be frozen or recycled between invocations with no
+  process lifecycle to ever clear that interval, so it would otherwise leak
+  one per cold start. It still connects to Redis, creates the queues, and
+  runs one outbox flush per invocation, so already-committed jobs still get
+  enqueued; the long-running API process (`apps/api/src/main.ts`) is
+  unaffected and keeps the recurring flush.
+
 ## Prisma Compute API deployment
 
 The API target packages its exact runtime dependencies and generated Prisma

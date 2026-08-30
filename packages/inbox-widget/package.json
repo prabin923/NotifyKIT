@@ -1,0 +1,42 @@
+{
+  "name": "@notification-platform/inbox-widget",
+  "version": "0.1.0",
+  "description": "Drop-in browser inbox widget for NotifyKIT: a <notifykit-inbox> custom element, no framework or build step required.",
+  "type": "module",
+  "main": "./dist/inbox-widget.js",
+  "module": "./dist/inbox-widget.js",
+  "types": "./dist/inbox-widget.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/inbox-widget.d.ts",
+      "import": "./dist/inbox-widget.js",
+      "default": "./dist/inbox-widget.js"
+    },
+    "./iife": "./dist/inbox-widget.iife.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "license": "MIT",
+  "sideEffects": [
+    "./dist/inbox-widget.iife.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/notifykit/notification-system.git",
+    "directory": "packages/inbox-widget"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

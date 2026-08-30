@@ -44,6 +44,41 @@ category), uppercase `channels`, optional `scheduled_at`, and `expires_at`.
 `notifications:write`; sent, delivered, failed, expired, and already cancelled
 notifications cannot be cancelled.
 
+## In-app inbox
+
+Browsers cannot hold a tenant's secret API key, so the inbox is authenticated
+with a separate short-lived end-user token instead.
+
+`POST /v1/users/:externalUserId/token` requires `users:manage`. Mints a
+short-lived token (default `USER_TOKEN_EXPIRES_IN=1h`) for that user, 404s
+with `USER_NOT_FOUND` if the user does not exist for the tenant, and returns:
+
+```json
+{ "success": true, "data": { "token": "eyJ...", "expires_at": "2026-08-29T13:00:00.000Z" }, "request_id": "req_123" }
+```
+
+Call this from your backend after authenticating the browser session, then
+hand the returned token to that browser. The rest of the inbox endpoints
+authenticate with `Authorization: Bearer <token>` (not an API key) and are
+scoped to that single end user; they are additionally rate-limited per user.
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /v1/inbox` | Cursor-paginated, newest first. `?limit=` (1-100, default 50), `?cursor=`, `?status=unread\|read\|all` (default `all`), `?archived=true\|false` (default `false`). Returns `{ items, next_cursor }`; each item is `{ id, title, body, category, priority, data, created_at, seen_at, read_at, archived_at }`. |
+| `GET /v1/inbox/count` | `{ unread, total }`, excluding archived items. |
+| `POST /v1/inbox/:id/read` | Idempotent; also sets `seen_at` if it was not already set. 404s (`NOT_FOUND`) if the item is not this user's. |
+| `POST /v1/inbox/:id/unread` | Idempotent; clears `read_at`. |
+| `POST /v1/inbox/:id/seen` | Idempotent; sets `seen_at` on first call, otherwise a no-op. |
+| `POST /v1/inbox/:id/archive` | Idempotent; excludes the item from the default (non-archived) list. |
+| `POST /v1/inbox/read-all` | Marks every unread, non-archived item as read. Returns `{ updated }`. |
+
+An item only appears in the inbox once its notification has an `IN_APP`
+delivery — sending a notification with `channels: ["IN_APP"]` (via
+`POST /v1/events` or `POST /v1/notifications`) is what creates one.
+
+Dashboard users can review recent inbox items for their tenant with
+`GET /v1/dashboard/inbox` (dashboard JWT, no role restriction beyond login).
+
 ## Configuration resources
 
 | Endpoint | Permission | Purpose |
@@ -66,5 +101,5 @@ token. `GET /v1/auth/me` validates it. Dashboard-only read models are under
 `GET /health/live` checks process liveness. `/health` and `/health/ready`
 check PostgreSQL and Redis. Typical error codes are `INVALID_REQUEST`,
 `UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED`, `DUPLICATE_RESOURCE`,
-`QUEUE_UNAVAILABLE`, `INVALID_STATE_TRANSITION`, `NOT_CANCELLABLE`, and
-`SERVER_MISCONFIGURED`.
+`QUEUE_UNAVAILABLE`, `INVALID_STATE_TRANSITION`, `NOT_CANCELLABLE`,
+`INVALID_TOKEN`, `NOT_FOUND`, and `SERVER_MISCONFIGURED`.

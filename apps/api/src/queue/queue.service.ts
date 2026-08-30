@@ -13,13 +13,18 @@ export class QueueService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async start(): Promise<void> {
+  // `serverless: true` (Vercel/Prisma Compute cold starts) still connects to Redis, creates
+  // the queues, and runs one flush so anything already committed gets enqueued, but skips the
+  // recurring timer: a function instance can be frozen or recycled between invocations, and an
+  // un-cleared interval would otherwise leak per cold start with no process lifecycle to stop it.
+  async start(options?: { serverless?: boolean }): Promise<void> {
     const redisUrl = process.env.REDIS_URL;
     if (!redisUrl) throw new Error('REDIS_URL is required');
     this.connection = new IORedis(redisUrl, { maxRetriesPerRequest: null, enableReadyCheck: true });
     await this.connection.ping();
     for (const queueName of Object.values(QUEUE_NAMES)) this.queues.set(queueName, new Queue(queueName, { connection: this.connection }));
     await this.flushOutbox();
+    if (options?.serverless) return;
     const interval = Number(process.env.OUTBOX_FLUSH_INTERVAL_MS ?? 5_000);
     if (!Number.isSafeInteger(interval) || interval < 100) throw new Error('OUTBOX_FLUSH_INTERVAL_MS must be an integer of at least 100 milliseconds');
     this.flushTimer = setInterval(() => {

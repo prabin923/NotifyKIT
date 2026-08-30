@@ -2,6 +2,7 @@ import { Channel, EventStatus, Priority, Prisma, WorkflowStatus } from '@prisma/
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
 import { PreferencesService } from '../preferences/preferences.service';
+import { channelProvider, channelQueue } from '../queue/queue.constants';
 import { QueueService } from '../queue/queue.service';
 import { TemplatesService } from '../templates/templates.service';
 import { RateLimiterService } from '../common/rate-limiter.service';
@@ -56,6 +57,7 @@ export class EventsService {
       const channels = requested.length ? requested : user.email ? [Channel.EMAIL] : [];
       const category = choice?.category ?? 'transactional';
       const enabledChannels = await this.preferences.enabledChannels(tenantId, user.id, category, channels);
+      if (enabledChannels.includes(Channel.EMAIL) && !user.email) throw new ApiError('INVALID_RECIPIENT', 'Email notifications require user.email.', 400);
       if (enabledChannels.length) await this.rateLimiter.consumeNotifications(tenantId, user.externalId, enabledChannels);
       const notificationIds: string[] = [];
 
@@ -65,9 +67,9 @@ export class EventsService {
         const title = this.templates.render(template?.subject ?? `Update: ${input.event}`, context);
         const body = this.templates.render(template?.body ?? `An event of type ${input.event} was received.`, context);
         const notification = await tx.notification.create({ data: { tenantId, userId: user.id, eventId: event.id, templateId: template?.id, title, subject: template?.subject ? title : null, body, category, priority: choice?.priority ?? Priority.NORMAL, status: 'QUEUED' } });
-        const delivery = await tx.delivery.create({ data: { tenantId, notificationId: notification.id, channel, provider: channel === Channel.EMAIL ? (process.env.EMAIL_PROVIDER ?? 'console') : channel === Channel.PUSH ? (process.env.PUSH_PROVIDER ?? 'console') : 'webhook', status: 'QUEUED' } });
+        const delivery = await tx.delivery.create({ data: { tenantId, notificationId: notification.id, channel, provider: channelProvider(channel), status: 'QUEUED' } });
         const queuePriority = choice?.priority === Priority.CRITICAL ? 1 : choice?.priority === Priority.HIGH ? 2 : choice?.priority === Priority.NORMAL ? 5 : 10;
-        await this.queue.enqueueOutbox({ tenantId, queue: channel === Channel.EMAIL ? 'email' : channel === Channel.PUSH ? 'push' : 'webhook', jobName: 'delivery.send', dedupeKey: `delivery-${delivery.id}`, payload: { deliveryId: delivery.id, priority: queuePriority } }, tx);
+        await this.queue.enqueueOutbox({ tenantId, queue: channelQueue(channel), jobName: 'delivery.send', dedupeKey: `delivery-${delivery.id}`, payload: { deliveryId: delivery.id, priority: queuePriority } }, tx);
         notificationIds.push(notification.id);
       }
       await tx.event.update({ where: { id: event.id }, data: { status: EventStatus.PROCESSING } });

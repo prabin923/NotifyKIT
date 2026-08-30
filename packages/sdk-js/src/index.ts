@@ -1,14 +1,40 @@
-export interface NotificationClientOptions { apiKey: string; baseUrl?: string; fetch?: typeof fetch }
-export interface EventInput { event: string; idempotency_key?: string; external_event_id?: string; user: { id: string; email?: string; phone?: string; name?: string }; data?: Record<string, unknown> }
-export interface DirectNotificationInput { user_id: string; notification: { title: string; message: string; priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL'; category?: string }; channels: Array<'EMAIL' | 'PUSH' | 'WEBHOOK'>; scheduled_at?: string; expires_at?: string }
+export { NotificationClient } from './client';
+export type { NotificationClientOptions } from './client';
 
-export class NotificationApiError extends Error { constructor(readonly code: string, message: string, readonly status: number, readonly details?: Record<string, unknown>) { super(message); } }
+// Separate, browser-safe export: authenticated with an end-user token, never the secret API
+// key. See InboxClient's doc comment in ./inbox for the two-step mint/consume flow.
+export { InboxClient, createInboxClient } from './inbox';
+export type { InboxClientOptions } from './inbox';
 
-export class NotificationClient {
-  private readonly requestFn: typeof fetch;
-  private readonly baseUrl: string;
-  constructor(private readonly options: NotificationClientOptions) { this.baseUrl = (options.baseUrl ?? 'http://localhost:3000').replace(/\/$/, ''); this.requestFn = options.fetch ?? globalThis.fetch; if (!this.requestFn) throw new Error('A fetch implementation is required.'); }
-  readonly events = { create: (input: EventInput, idempotencyKey?: string) => this.request<{ event_id: string; status: 'accepted'; notification_ids: string[] }>('/v1/events', { method: 'POST', body: input, idempotencyKey: idempotencyKey ?? input.idempotency_key }) };
-  readonly notifications = { create: (input: DirectNotificationInput) => this.request<{ id: string; status: string; delivery_ids: string[] }>('/v1/notifications', { method: 'POST', body: input }), list: () => this.request<unknown>('/v1/notifications'), get: (id: string) => this.request<unknown>(`/v1/notifications/${encodeURIComponent(id)}`), cancel: (id: string) => this.request<void>(`/v1/notifications/${encodeURIComponent(id)}/cancel`, { method: 'POST' }) };
-  private async request<T>(path: string, init: { method?: string; body?: unknown; idempotencyKey?: string } = {}): Promise<T> { const response = await this.requestFn(`${this.baseUrl}${path}`, { method: init.method ?? 'GET', headers: { authorization: `Bearer ${this.options.apiKey}`, ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.idempotencyKey ? { 'idempotency-key': init.idempotencyKey } : {}) }, ...(init.body ? { body: JSON.stringify(init.body) } : {}) }); const value = await response.json() as { success: boolean; data?: T; error?: { code?: string; message?: string; details?: Record<string, unknown> }; event_id?: string; status?: string; notification_ids?: string[] }; if (!response.ok || !value.success) throw new NotificationApiError(value.error?.code ?? 'REQUEST_FAILED', value.error?.message ?? 'Request failed', response.status, value.error?.details); if ('event_id' in value) return { event_id: value.event_id!, status: value.status as 'accepted', notification_ids: value.notification_ids ?? [] } as T; return value.data as T; }
-}
+export { NotificationApiError } from './errors';
+
+export type {
+  AnalyticsQuery,
+  Channel,
+  CreateNotificationResult,
+  CreateTemplateInput,
+  CreateWebhookInput,
+  CreateWorkflowInput,
+  DevicePlatform,
+  DirectNotificationInput,
+  EventAcceptedResult,
+  EventInput,
+  InboxCount,
+  InboxItem,
+  InboxListQuery,
+  InboxStatusFilter,
+  MintUserTokenResult,
+  NotificationListQuery,
+  NotificationStatus,
+  Paginated,
+  PreferenceInput,
+  Priority,
+  RegisterDeviceInput,
+  RequestOptions,
+  TemplateStatus,
+  UpdateTemplateInput,
+  UpdateWebhookInput,
+  UpdateWorkflowInput,
+  WebhookStatus,
+  WorkflowStatus,
+} from './types';

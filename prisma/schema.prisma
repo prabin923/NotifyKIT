@@ -70,6 +70,7 @@ enum Channel {
   EMAIL
   PUSH
   WEBHOOK
+  IN_APP
 }
 
 enum DeliveryStatus {
@@ -240,6 +241,10 @@ model Notification {
   scheduledAt DateTime?          @map("scheduled_at")
   expiresAt   DateTime?          @map("expires_at")
   cancelledAt DateTime?          @map("cancelled_at")
+  seenAt      DateTime?          @map("seen_at")
+  readAt      DateTime?          @map("read_at")
+  archivedAt  DateTime?          @map("archived_at")
+  data        Json?
   createdAt   DateTime           @default(now()) @map("created_at")
   updatedAt   DateTime           @updatedAt @map("updated_at")
   tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -251,6 +256,7 @@ model Notification {
   @@index([tenantId, status, createdAt])
   @@index([tenantId, userId, createdAt])
   @@index([tenantId, scheduledAt])
+  @@index([tenantId, userId, readAt, createdAt])
   @@map("notifications")
 }
 

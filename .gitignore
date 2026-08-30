@@ -8,6 +8,14 @@ coverage
 apps/api/prisma/test.db
 .prisma/
 .vercel
+.DS_Store
+**/.DS_Store
+*.tsbuildinfo
+dump.rdb
+backups/
+__pycache__/
+*.py[cod]
+*.egg-info/
 .env*
 !.env.example
 !.env.production.example

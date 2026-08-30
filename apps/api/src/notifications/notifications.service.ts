@@ -2,6 +2,7 @@ import { Channel, DeliveryStatus, NotificationStatus, Priority } from '@prisma/c
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../common/prisma.service';
 import { PreferencesService } from '../preferences/preferences.service';
+import { channelProvider, channelQueue } from '../queue/queue.constants';
 import { QueueService } from '../queue/queue.service';
 import { assertNotificationTransition } from './notification-state';
 import type { CreateNotificationDto } from './dto';
@@ -16,15 +17,16 @@ export class NotificationsService {
     if (!user) throw new ApiError('USER_NOT_FOUND', 'The target user does not exist for this tenant. Send an event with user data first.', 404);
     const category = input.notification.category ?? 'transactional';
     const enabledChannels = await this.preferences.enabledChannels(tenantId, user.id, category, [...new Set(input.channels)]);
+    if (enabledChannels.includes(Channel.EMAIL) && !user.email) throw new ApiError('INVALID_RECIPIENT', 'Email notifications require the user to have an email address.', 400);
     if (!enabledChannels.length) throw new ApiError('NO_ENABLED_CHANNELS', 'All requested channels are disabled by user preferences.', 409);
     await this.rateLimiter.consumeNotifications(tenantId, user.externalId, enabledChannels);
     const result = await this.prisma.$transaction(async (tx) => {
       const notification = await tx.notification.create({ data: { tenantId, userId: user.id, title: input.notification.title, subject: input.notification.title, body: input.notification.message, priority: input.notification.priority ?? Priority.NORMAL, category, status: NotificationStatus.QUEUED, scheduledAt: input.scheduled_at, expiresAt: input.expires_at } });
       const deliveryIds: string[] = [];
       for (const channel of enabledChannels) {
-        const delivery = await tx.delivery.create({ data: { tenantId, notificationId: notification.id, channel, provider: channel === Channel.EMAIL ? (process.env.EMAIL_PROVIDER ?? 'console') : channel === Channel.PUSH ? (process.env.PUSH_PROVIDER ?? 'console') : 'webhook', status: DeliveryStatus.QUEUED } });
+        const delivery = await tx.delivery.create({ data: { tenantId, notificationId: notification.id, channel, provider: channelProvider(channel), status: DeliveryStatus.QUEUED } });
         const priority = notification.priority === Priority.CRITICAL ? 1 : notification.priority === Priority.HIGH ? 2 : notification.priority === Priority.NORMAL ? 5 : 10;
-        await this.queue.enqueueOutbox({ tenantId, queue: channel === Channel.EMAIL ? 'email' : channel === Channel.PUSH ? 'push' : 'webhook', jobName: 'delivery.send', dedupeKey: `delivery-${delivery.id}`, payload: { deliveryId: delivery.id, priority }, availableAt: input.scheduled_at }, tx);
+        await this.queue.enqueueOutbox({ tenantId, queue: channelQueue(channel), jobName: 'delivery.send', dedupeKey: `delivery-${delivery.id}`, payload: { deliveryId: delivery.id, priority }, availableAt: input.scheduled_at }, tx);
         deliveryIds.push(delivery.id);
       }
       return { id: notification.id, status: notification.status, delivery_ids: deliveryIds };
@@ -35,9 +37,13 @@ export class NotificationsService {
 
   async list(tenantId: string, input: { status?: NotificationStatus; limit?: number; cursor?: string }) {
     const take = Math.min(Math.max(input.limit ?? 50, 1), 100);
-    const rows = await this.prisma.notification.findMany({ where: { tenantId, ...(input.status ? { status: input.status } : {}) }, include: { user: { select: { externalId: true, email: true } }, deliveries: true }, orderBy: { createdAt: 'desc' }, take: take + 1, ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}) });
-    const next = rows.length > take ? rows.pop() : undefined;
-    return { items: rows, next_cursor: next?.id ?? null };
+    const rows = await this.prisma.notification.findMany({ where: { tenantId, ...(input.status ? { status: input.status } : {}) }, include: { user: { select: { externalId: true, email: true } }, deliveries: true }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: take + 1, ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}) });
+    // See InboxService.list: the popped take + 1 row signals another page but was
+    // never returned, so the cursor has to be the last row the client received.
+    const hasMore = rows.length > take;
+    if (hasMore) rows.pop();
+    const last = rows[rows.length - 1];
+    return { items: rows, next_cursor: hasMore && last ? last.id : null };
   }
 
   async get(tenantId: string, id: string) {

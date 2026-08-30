@@ -12,7 +12,10 @@ asynchronously through replaceable channels.
 - BullMQ/Redis email, push, webhook, retry, and dead-letter architecture.
 - Real SMTP and FCM integrations when configured; safe console delivery adapters for local use.
 - Signed HMAC-SHA256 outbound webhooks with timeout, retry, and attempt tracking.
-- Next.js/Tailwind operations dashboard plus JavaScript/TypeScript and Python SDKs.
+- In-app inbox channel with per-user read/seen/archive state, end-user scoped tokens, and a
+  cursor-paginated `/v1/inbox` API browsers can call directly.
+- Drop-in `<notifykit-inbox>` web component (Shadow DOM, zero dependencies, one `<script>` tag).
+- Next.js/Tailwind operations dashboard plus publishable JavaScript/TypeScript and Python SDKs.
 
 ## Architecture
 
@@ -23,6 +26,8 @@ flowchart LR
   API --> Q[(Redis / BullMQ)]
   Q --> W[Independent workers]
   W --> C[SMTP / FCM / client webhook]
+  W --> IN[(In-app inbox)]
+  IN --> BW[notifykit-inbox widget / browser SDK]
   UI[Next.js dashboard] --> API
 ```
 
@@ -82,6 +87,31 @@ curl -X POST http://localhost:3000/v1/events \
 The API returns `202` immediately. The worker emits a console email by default;
 choose `EMAIL_PROVIDER=smtp` with Mailpit/SMTP configuration for real SMTP.
 
+## Embedding in a web app
+
+The inbox is designed to be embedded. Browsers must never hold a tenant's secret key, so
+integration is two steps:
+
+1. Your **backend** mints a short-lived, per-user token with its secret API key:
+
+```bash
+curl -X POST http://localhost:3000/v1/users/user_123/token \
+  -H "Authorization: Bearer nk_test_xxx"
+# -> { "success": true, "data": { "token": "eyJ...", "expires_at": "..." } }
+```
+
+2. Your **frontend** drops in the widget with that token — no framework, no build step:
+
+```html
+<script src="https://your-cdn.example/inbox-widget.iife.js"></script>
+<notifykit-inbox token="eyJ..." base-url="https://api.example.com"></notifykit-inbox>
+```
+
+Pointing `base-url` at another origin requires that origin in the API's `CORS_ORIGINS`.
+For a custom UI, use `createInboxClient({ token })` from the JS SDK against `/v1/inbox`
+instead. See [packages/inbox-widget](packages/inbox-widget/README.md) for the full attribute
+and event reference.
+
 ## SDKs
 
 ```ts
@@ -94,6 +124,14 @@ await client.events.create({ event: 'order.created', user: { id: 'user_123' }, d
 from notification_platform import NotificationClient
 client = NotificationClient(api_key="nk_test_xxx")
 client.events.create("order.created", {"id": "user_123"}, {"order_id": "ORD-123"})
+```
+
+The inbox client is a separate export that takes an end-user token, never the secret key:
+
+```ts
+import { createInboxClient } from '@notification-platform/sdk';
+const inbox = createInboxClient({ token, baseUrl: 'https://api.example.com' });
+const { items, next_cursor } = await inbox.list({ status: 'unread' });
 ```
 
 Any HTTP-capable system can use the REST event API; SDKs are convenience layers,
@@ -120,6 +158,9 @@ TEST_REDIS_URL=redis://localhost:6379/15 npm run test:e2e
 git diff --check
 ```
 
+When running against the provided Compose Postgres service, use
+`notification:notification` credentials in `TEST_DATABASE_URL`.
+
 Tests cover state transitions, templates, API key behavior, and the event flow;
 the E2E suite requires the local Postgres and Redis dependencies.
 
@@ -129,4 +170,3 @@ The intentionally deferred extensions are SMS/WhatsApp/Slack/Discord, iOS APNs,
 full conditional/wait/fallback execution and visual workflow editing, provider
 failover, analytics warehouse, SSO/SCIM, billing, Kafka, Kubernetes, and
 multi-region delivery.
-# NotifyKIT

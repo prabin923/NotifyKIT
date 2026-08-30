@@ -12,7 +12,13 @@ let firebaseApp: App | undefined;
 
 function smtpTransport(): Transporter {
   if (!transporter) {
-    transporter = nodemailer.createTransport({ host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT ?? 587), secure: Number(process.env.SMTP_PORT) === 465, auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD } : undefined });
+    const password = process.env.RESEND_API_KEY ?? process.env.SMTP_PASSWORD;
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT ?? 587),
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: password } : undefined,
+    });
   }
   return transporter;
 }
@@ -28,17 +34,23 @@ function fcmApp(): App {
 }
 
 export async function sendEmail(input: EmailInput): Promise<{ providerMessageId: string }> {
-  if (!input.to) throw new DeliveryError('INVALID_RECIPIENT', 'Recipient email is missing.', false);
+  if (!input.to?.trim()) throw new DeliveryError('INVALID_RECIPIENT', 'Recipient email is missing.', false);
   if (process.env.EMAIL_PROVIDER !== 'smtp') {
     console.info(JSON.stringify({ type: 'email', to: input.to, subject: input.subject, body: input.body }));
     return { providerMessageId: `console-email-${randomUUID()}` };
   }
   try {
-    const response = await smtpTransport().sendMail({ from: process.env.SMTP_FROM, to: input.to, subject: input.subject ?? '', text: input.body, html: input.body });
+    const from = process.env.EMAIL_FROM ?? process.env.SMTP_FROM;
+    if (!from?.trim()) throw new DeliveryError('PERMANENT_FAILURE', 'SMTP sender is not configured.', false);
+    const response = await smtpTransport().sendMail({ from, to: input.to, subject: input.subject ?? '', text: input.body, html: input.body });
     return { providerMessageId: response.messageId };
   } catch (error) {
+    if (error instanceof DeliveryError) throw error;
     const code = (error as { code?: string }).code;
     if (code === 'EENVELOPE') throw new DeliveryError('INVALID_RECIPIENT', 'The email recipient was rejected.', false);
+    if (code === 'EAUTH') throw new DeliveryError('PERMANENT_FAILURE', 'SMTP authentication failed. Check the SMTP credentials.', false);
+    const responseCode = (error as { responseCode?: number }).responseCode ?? 0;
+    if (responseCode >= 500) throw new DeliveryError('PERMANENT_FAILURE', 'SMTP rejected the message. Verify the sender domain and recipient.', false);
     throw new DeliveryError('TEMPORARY_FAILURE', 'SMTP provider is unavailable.', true);
   }
 }

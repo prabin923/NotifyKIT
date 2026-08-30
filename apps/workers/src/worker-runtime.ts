@@ -12,7 +12,7 @@ type DeliveryJob = { deliveryId: string };
 type WebhookJob = { webhookDeliveryId: string };
 
 const MAX_ATTEMPTS = 5;
-const queueNames = ['email', 'push', 'webhook'] as const;
+const queueNames = ['email', 'push', 'in-app', 'webhook'] as const;
 
 function createPrismaClient(): PrismaClient {
   const databaseUrl = process.env.DATABASE_URL;
@@ -44,6 +44,7 @@ export class WorkerRuntime {
     await this.redis.ping();
     this.workers.push(new Worker<DeliveryJob>('email', (job) => this.processDelivery(job), { connection: this.redis, concurrency: 10 }));
     this.workers.push(new Worker<DeliveryJob>('push', (job) => this.processDelivery(job), { connection: this.redis, concurrency: 20 }));
+    this.workers.push(new Worker<DeliveryJob>('in-app', (job) => this.processDelivery(job), { connection: this.redis, concurrency: 20 }));
     this.workers.push(new Worker<DeliveryJob | WebhookJob>('webhook', (job) => job.name === 'webhook.send' ? this.processWebhook(job as Job<WebhookJob>) : this.processDelivery(job as Job<DeliveryJob>), { connection: this.redis, concurrency: 10 }));
     for (const worker of this.workers) {
       worker.on('failed', (job, error) => {
@@ -98,6 +99,10 @@ export class WorkerRuntime {
         const result = await sendPush({ tokens: notification.user.devices.map((device) => device.deviceToken), title: notification.title, body: notification.body });
         if (result.invalidTokens.length) await this.prisma.device.deleteMany({ where: { deviceToken: { in: result.invalidTokens } } });
         providerMessageId = result.providerMessageId;
+      } else if (delivery.channel === Channel.IN_APP) {
+        // The notification row itself is the inbox item, so "delivery" for this channel just
+        // means it became visible to /v1/inbox — there is no external provider to call.
+        providerMessageId = `in-app-${randomUUID()}`;
       } else {
         await this.createWebhookDeliveries(notification.tenantId, notification.id, 'notification.requested', { event: 'notification.requested', notification_id: notification.id, channel: 'webhook', timestamp: new Date().toISOString() });
         providerMessageId = `webhook-fanout-${randomUUID()}`;

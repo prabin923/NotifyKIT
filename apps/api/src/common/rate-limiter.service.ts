@@ -27,6 +27,12 @@ export class RateLimiterService {
     await Promise.all([this.consume(`tenant:${tenantId}:requests`, limit, 60), this.consume(`api-key:${keyId}:requests`, limit, 60)]);
   }
 
+  // Browser-held end-user tokens have no API key to key a limit off of, and are scoped to a
+  // single user rather than a whole tenant, so this is deliberately narrower than consumeRequest.
+  async consumeEndUserRequest(tenantId: string, userId: string): Promise<void> {
+    await this.consume(`tenant:${tenantId}:end-user:${userId}:requests`, 120, 60);
+  }
+
   async consumeNotifications(tenantId: string, externalUserId: string, channels: string[]): Promise<void> {
     const policy = await this.prisma.tenantPolicy.findUnique({ where: { tenantId }, select: { notificationsPerHour: true } });
     const tenantLimit = policy?.notificationsPerHour ?? 10_000;
