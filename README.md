@@ -1,4 +1,7 @@
-# Universal Notification Platform
+# NotifyKIT — Universal Notification Platform
+
+[![CI](https://github.com/prabin923/NotifyKIT/actions/workflows/ci.yml/badge.svg)](https://github.com/prabin923/NotifyKIT/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Multi-tenant Notification-as-a-Service infrastructure: external systems send a
 universal event, the platform authenticates and isolates the tenant, applies
@@ -47,7 +50,7 @@ cp .env.example .env
 docker compose up -d postgres redis mailpit
 npm install
 npm run prisma:generate
-npx prisma db push --schema prisma/schema.prisma
+npx prisma migrate deploy --schema prisma/schema.prisma
 npm run prisma:seed
 npm run dev
 ```
@@ -71,6 +74,16 @@ private API port.
 For a long-running production worker, use the separate production Compose
 profile documented in [docs/deployment.md](docs/deployment.md). It restarts the
 worker process after a failure and keeps it independent from HTTP API replicas.
+
+## Packages
+
+| Package | Published | Purpose |
+| --- | --- | --- |
+| [`packages/sdk-js`](packages/sdk-js/README.md) | yes | TypeScript/JavaScript SDK (ESM + CJS). `NotificationClient` for backends, `createInboxClient` for browsers. |
+| [`packages/inbox-widget`](packages/inbox-widget/README.md) | yes | `<notifykit-inbox>` custom element. Zero dependencies, ESM + self-registering IIFE. |
+| [`packages/sdk-python`](packages/sdk-python/README.md) | yes | Stdlib-only Python SDK mirroring the JS surface. |
+| `packages/types` | internal | Shared string-literal unions mirroring the Prisma enums. |
+| `packages/shared` | internal | Hashing, constant-time compare, and template rendering helpers. |
 
 ## Demo event
 
@@ -152,17 +165,30 @@ Tenant identity is always resolved from server-side credentials, not the body.
 
 ```bash
 npm run build
+npm run lint --workspaces --if-present
 npm test
+
+# E2E needs a migrated database and a reachable Redis. Apply migrations first:
+DATABASE_URL=postgresql://notification:notification@localhost:5432/notification_platform?schema=public \
+  npx prisma migrate deploy --schema prisma/schema.prisma
 TEST_DATABASE_URL=postgresql://notification:notification@localhost:5432/notification_platform?schema=public \
 TEST_REDIS_URL=redis://localhost:6379/15 npm run test:e2e
-git diff --check
 ```
 
 When running against the provided Compose Postgres service, use
-`notification:notification` credentials in `TEST_DATABASE_URL`.
+`notification:notification` credentials in `TEST_DATABASE_URL`. The E2E suite
+reads `TEST_DATABASE_URL` rather than `DATABASE_URL` by design, so a local run
+can never mutate a deployed database by accident.
 
-Tests cover state transitions, templates, API key behavior, and the event flow;
-the E2E suite requires the local Postgres and Redis dependencies.
+Unit tests cover notification state transitions, template rendering, inbox
+state, and end-user token validation. The E2E suite exercises the full HTTP and
+worker path against real Postgres and Redis: event acceptance and idempotency,
+dead-letter handling, outbox recovery, scheduled delivery, signed webhooks, and
+the in-app inbox — including tenant and cross-user isolation, and cursor
+pagination across page boundaries.
+
+[GitHub Actions](.github/workflows/ci.yml) runs the same checks on every push
+and pull request, with Postgres and Redis service containers for E2E.
 
 ## Roadmap
 
@@ -170,3 +196,7 @@ The intentionally deferred extensions are SMS/WhatsApp/Slack/Discord, iOS APNs,
 full conditional/wait/fallback execution and visual workflow editing, provider
 failover, analytics warehouse, SSO/SCIM, billing, Kafka, Kubernetes, and
 multi-region delivery.
+
+## License
+
+[MIT](LICENSE).
